@@ -12,8 +12,7 @@
     },
     "./convex.config": {
       "@convex-dev/component-source": "./src/component/convex.config.ts",
-      "types": "./dist/component/convex.config.d.ts",
-      "import": "./dist/component/convex.config.js"
+      "default": "./src/component/convex.config.ts"
     },
     "./schema": {
       "types": "./dist/schema.d.ts",

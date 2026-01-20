@@ -21,36 +21,28 @@
  * ```
  */
 
-import type {
-  GenericMutationCtx,
-  GenericQueryCtx,
-  GenericActionCtx,
-} from "convex/server";
-
-// Type for the component API - will be refined when generated types are available
-type ComponentApi = {
-  public: {
-    store: any;
-    get: any;
-    deleteField: any;
-    deleteAllUserData: any;
-    exists: any;
-    listRefs: any;
-  };
-};
-
 /**
  * Reference to an encrypted PII field.
  * This is an opaque string that should be stored in your documents.
  */
 export type EncryptedFieldRef = string & { __brand: "EncryptedFieldRef" };
 
+// Use permissive types for cross-package compatibility
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyCtx = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyComponent = any;
+
 /**
  * Client for the Encrypted PII component.
  * Instantiate once and use throughout your Convex functions.
  */
 export class EncryptedPII {
-  constructor(private component: ComponentApi) {}
+  private component: AnyComponent;
+
+  constructor(component: AnyComponent) {
+    this.component = component;
+  }
 
   /**
    * Store an encrypted value.
@@ -59,22 +51,9 @@ export class EncryptedPII {
    * @param ownerId - The user who owns this data (typically ctx.auth user ID)
    * @param value - The plaintext value to encrypt
    * @returns A reference ID to store in your document
-   *
-   * @example
-   * ```typescript
-   * const ssnRef = await encryptedPii.store(ctx, userId, "123-45-6789");
-   * await ctx.db.patch(userId, { ssnRef });
-   * ```
    */
-  async store(
-    ctx: GenericMutationCtx<any>,
-    ownerId: string,
-    value: string
-  ): Promise<EncryptedFieldRef> {
-    const ref = await ctx.runMutation(this.component.public.store, {
-      ownerId,
-      value,
-    });
+  async store(ctx: AnyCtx, ownerId: string, value: string): Promise<EncryptedFieldRef> {
+    const ref = await ctx.runMutation(this.component.public.store, { ownerId, value });
     return ref as EncryptedFieldRef;
   }
 
@@ -85,24 +64,9 @@ export class EncryptedPII {
    * @param ownerId - The user attempting to decrypt (must match the original owner)
    * @param ref - The reference ID returned by store()
    * @returns The decrypted value, or null if not found/unauthorized
-   *
-   * @example
-   * ```typescript
-   * const ssn = await encryptedPii.get(ctx, userId, user.ssnRef);
-   * if (ssn) {
-   *   // Use the decrypted SSN
-   * }
-   * ```
    */
-  async get(
-    ctx: GenericMutationCtx<any>,
-    ownerId: string,
-    ref: EncryptedFieldRef | string
-  ): Promise<string | null> {
-    return ctx.runMutation(this.component.public.get, {
-      ownerId,
-      ref,
-    });
+  async get(ctx: AnyCtx, ownerId: string, ref: EncryptedFieldRef | string): Promise<string | null> {
+    return ctx.runMutation(this.component.public.get, { ownerId, ref }) as Promise<string | null>;
   }
 
   /**
@@ -113,15 +77,8 @@ export class EncryptedPII {
    * @param ref - The reference ID to delete
    * @returns true if deleted, false if not found/unauthorized
    */
-  async delete(
-    ctx: GenericMutationCtx<any>,
-    ownerId: string,
-    ref: EncryptedFieldRef | string
-  ): Promise<boolean> {
-    return ctx.runMutation(this.component.public.deleteField, {
-      ownerId,
-      ref,
-    });
+  async delete(ctx: AnyCtx, ownerId: string, ref: EncryptedFieldRef | string): Promise<boolean> {
+    return ctx.runMutation(this.component.public.deleteField, { ownerId, ref }) as Promise<boolean>;
   }
 
   /**
@@ -132,13 +89,8 @@ export class EncryptedPII {
    * @param ownerId - The user whose data should be deleted
    * @returns Number of fields deleted
    */
-  async deleteAllUserData(
-    ctx: GenericMutationCtx<any>,
-    ownerId: string
-  ): Promise<number> {
-    return ctx.runMutation(this.component.public.deleteAllUserData, {
-      ownerId,
-    });
+  async deleteAllUserData(ctx: AnyCtx, ownerId: string): Promise<number> {
+    return ctx.runMutation(this.component.public.deleteAllUserData, { ownerId }) as Promise<number>;
   }
 
   /**
@@ -150,15 +102,8 @@ export class EncryptedPII {
    * @param ref - The reference ID to check
    * @returns true if exists and owned by user
    */
-  async exists(
-    ctx: GenericQueryCtx<any>,
-    ownerId: string,
-    ref: EncryptedFieldRef | string
-  ): Promise<boolean> {
-    return ctx.runQuery(this.component.public.exists, {
-      ownerId,
-      ref,
-    });
+  async exists(ctx: AnyCtx, ownerId: string, ref: EncryptedFieldRef | string): Promise<boolean> {
+    return ctx.runQuery(this.component.public.exists, { ownerId, ref }) as Promise<boolean>;
   }
 
   /**
@@ -169,17 +114,39 @@ export class EncryptedPII {
    * @param ownerId - The user whose refs to list
    * @returns Array of refs with creation timestamps
    */
-  async listRefs(
-    ctx: GenericQueryCtx<any>,
-    ownerId: string
-  ): Promise<Array<{ ref: EncryptedFieldRef; createdAt: number }>> {
-    const results = await ctx.runQuery(this.component.public.listRefs, {
-      ownerId,
-    });
-    return results.map((r: { ref: string; createdAt: number }) => ({
+  async listRefs(ctx: AnyCtx, ownerId: string): Promise<Array<{ ref: EncryptedFieldRef; createdAt: number }>> {
+    const results = await ctx.runQuery(this.component.public.listRefs, { ownerId });
+    return (results as Array<{ ref: string; createdAt: number }>).map((r) => ({
       ref: r.ref as EncryptedFieldRef,
       createdAt: r.createdAt,
     }));
+  }
+
+  /**
+   * Get the raw encrypted data for a field (for debugging/demo purposes).
+   * Shows what's actually stored - ciphertext, IV, encrypted DEK.
+   * Does NOT decrypt anything.
+   *
+   * @param ctx - Convex query context
+   * @param ownerId - The user who owns the data
+   * @param ref - The reference ID
+   * @returns Raw encrypted data or null if not found
+   */
+  async getRawEncryptedData(
+    ctx: AnyCtx,
+    ownerId: string,
+    ref: EncryptedFieldRef | string
+  ): Promise<{
+    ref: string;
+    ownerId: string;
+    ciphertext: string;
+    encryptedDek: string;
+    iv: string;
+    algorithm: string;
+    version: number;
+    createdAt: number;
+  } | null> {
+    return ctx.runQuery(this.component.public.getRawEncryptedData, { ownerId, ref });
   }
 }
 

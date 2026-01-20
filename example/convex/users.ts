@@ -1,6 +1,3 @@
-/**
- * Example user mutations demonstrating encrypted PII usage.
- */
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { EncryptedPII } from "@convex-dev/encrypted-pii";
@@ -10,118 +7,123 @@ import { components } from "./_generated/api";
 const encryptedPii = new EncryptedPII(components.encryptedPii);
 
 /**
- * Create a new user with encrypted SSN.
+ * List all users (without decrypted PII)
  */
-export const createUser = mutation({
-  args: {
-    name: v.string(),
-    email: v.string(),
-    ssn: v.string(), // Plaintext SSN from client
-  },
-  handler: async (ctx, args) => {
-    // First, create the user (we need the ID for encryption ownership)
-    const userId = await ctx.db.insert("users", {
-      name: args.name,
-      email: args.email,
-      ssnRef: "", // Temporary placeholder
-      // passportRef is optional, can be omitted entirely
-      driversLicenseRef: null, // nullable, must be present but can be null
-    });
-
-    // Encrypt the SSN with the user as owner
-    // Only this user will be able to decrypt it later
-    const ssnRef = await encryptedPii.store(ctx, userId, args.ssn);
-
-    // Update the user with the encrypted reference
-    await ctx.db.patch(userId, { ssnRef });
-
-    return userId;
-  },
-});
-
-/**
- * Get a user with decrypted PII.
- * Note: This is a mutation because decryption requires key operations.
- */
-export const getUserWithPII = mutation({
-  args: {
-    userId: v.id("users"),
-  },
-  handler: async (ctx, args) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user) return null;
-
-    // Decrypt the SSN - only works because we're passing the correct owner
-    const ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
-
-    // Optionally decrypt other PII fields if they exist
-    let passport = null;
-    if (user.passportRef) {
-      passport = await encryptedPii.get(ctx, args.userId, user.passportRef);
-    }
-
-    return {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      // Decrypted PII
-      ssn,
-      passport,
-    };
-  },
-});
-
-/**
- * Get a user without decrypting PII (safe for listing).
- */
-export const getUser = query({
-  args: {
-    userId: v.id("users"),
-  },
-  handler: async (ctx, args) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user) return null;
-
-    // Return user without decrypted PII
-    // The *Ref fields are opaque strings - not useful to display
-    return {
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    return users.map((user) => ({
       _id: user._id,
       name: user.name,
       email: user.email,
       hasSsn: !!user.ssnRef,
-      hasPassport: !!user.passportRef,
-    };
+      hasCreditCard: !!user.creditCardRef,
+    }));
   },
 });
 
 /**
- * Update a user's SSN.
+ * Create a new user
  */
-export const updateSSN = mutation({
+export const create = mutation({
+  args: {
+    name: v.string(),
+    email: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return ctx.db.insert("users", {
+      name: args.name,
+      email: args.email,
+    });
+  },
+});
+
+/**
+ * Store encrypted SSN for a user
+ */
+export const storeSsn = mutation({
   args: {
     userId: v.id("users"),
-    newSsn: v.string(),
+    ssn: v.string(),
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
     if (!user) throw new Error("User not found");
 
-    // Delete the old encrypted SSN
+    // Delete old SSN if exists
     if (user.ssnRef) {
       await encryptedPii.delete(ctx, args.userId, user.ssnRef);
     }
 
-    // Store the new encrypted SSN
-    const ssnRef = await encryptedPii.store(ctx, args.userId, args.newSsn);
-
-    // Update the user
+    // Encrypt and store the new SSN
+    const ssnRef = await encryptedPii.store(ctx, args.userId, args.ssn);
     await ctx.db.patch(args.userId, { ssnRef });
+
+    return ssnRef;
   },
 });
 
 /**
- * Delete a user and all their encrypted PII.
- * GDPR "right to be forgotten" compliant.
+ * Store encrypted credit card for a user
+ */
+export const storeCreditCard = mutation({
+  args: {
+    userId: v.id("users"),
+    creditCard: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("User not found");
+
+    // Delete old credit card if exists
+    if (user.creditCardRef) {
+      await encryptedPii.delete(ctx, args.userId, user.creditCardRef);
+    }
+
+    // Encrypt and store the new credit card
+    const creditCardRef = await encryptedPii.store(ctx, args.userId, args.creditCard);
+    await ctx.db.patch(args.userId, { creditCardRef });
+
+    return creditCardRef;
+  },
+});
+
+/**
+ * Get decrypted PII for a user
+ * In a real app, you'd verify the requesting user matches the owner
+ */
+export const getDecryptedPii = mutation({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+
+    let ssn = null;
+    let creditCard = null;
+
+    if (user.ssnRef) {
+      ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
+    }
+
+    if (user.creditCardRef) {
+      creditCard = await encryptedPii.get(ctx, args.userId, user.creditCardRef);
+    }
+
+    return {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      ssn,
+      creditCard,
+    };
+  },
+});
+
+/**
+ * Delete a user and all their encrypted PII
  */
 export const deleteUser = mutation({
   args: {
@@ -129,38 +131,45 @@ export const deleteUser = mutation({
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user) return;
+    if (!user) return { deleted: false, piiFieldsDeleted: 0 };
 
-    // Delete ALL encrypted data for this user in one call
-    // This removes all encrypted fields AND the user's encryption key
-    const deletedCount = await encryptedPii.deleteAllUserData(ctx, args.userId);
+    // Delete all encrypted PII for this user
+    const piiFieldsDeleted = await encryptedPii.deleteAllUserData(ctx, args.userId);
 
-    // Delete the user document
+    // Delete the user
     await ctx.db.delete(args.userId);
 
-    return { deletedPIIFields: deletedCount };
+    return { deleted: true, piiFieldsDeleted };
   },
 });
 
 /**
- * Add passport information to an existing user.
+ * Get the raw encrypted references (to show they're just opaque strings)
  */
-export const addPassport = mutation({
+export const getRawRefs = query({
   args: {
     userId: v.id("users"),
-    passportNumber: v.string(),
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error("User not found");
+    if (!user) return null;
 
-    // Encrypt and store the passport number
-    const passportRef = await encryptedPii.store(
-      ctx,
-      args.userId,
-      args.passportNumber
-    );
+    return {
+      ssnRef: user.ssnRef ?? null,
+      creditCardRef: user.creditCardRef ?? null,
+    };
+  },
+});
 
-    await ctx.db.patch(args.userId, { passportRef });
+/**
+ * Get the raw encrypted data (ciphertext, IV, etc.) for display
+ */
+export const getRawEncryptedData = query({
+  args: {
+    userId: v.id("users"),
+    ref: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return encryptedPii.getRawEncryptedData(ctx, args.userId, args.ref);
   },
 });

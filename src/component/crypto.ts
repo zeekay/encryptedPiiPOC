@@ -54,9 +54,9 @@ export async function encrypt(
   const data = new TextEncoder().encode(plaintext);
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: ALGORITHM, iv },
+    { name: ALGORITHM, iv: iv.buffer as ArrayBuffer },
     key,
-    data
+    data.buffer as ArrayBuffer
   );
 
   return base64Encode(new Uint8Array(ciphertext));
@@ -76,9 +76,9 @@ export async function decrypt(
   const ciphertext = base64Decode(ciphertextBase64);
 
   const plaintext = await crypto.subtle.decrypt(
-    { name: ALGORITHM, iv },
+    { name: ALGORITHM, iv: iv.buffer as ArrayBuffer },
     key,
-    ciphertext
+    ciphertext.buffer as ArrayBuffer
   );
 
   return new TextDecoder().decode(plaintext);
@@ -115,7 +115,7 @@ export async function unwrapKey(
 async function importKey(keyBytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes.buffer as ArrayBuffer,
     { name: ALGORITHM, length: KEY_LENGTH },
     false,
     ["encrypt", "decrypt"]

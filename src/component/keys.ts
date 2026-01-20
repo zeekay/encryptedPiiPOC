@@ -19,7 +19,6 @@ import {
   generateKey,
   generateIV,
   wrapKey,
-  unwrapKey,
 } from "./crypto.js";
 
 /**
@@ -29,13 +28,11 @@ import {
 export const getOrCreateMasterKey = internalQuery({
   args: {},
   returns: v.string(),
-  handler: async (ctx): Promise<string> => {
+  handler: async (ctx) => {
     const existing = await ctx.db.query("masterKey").first();
     if (existing) {
       return existing.key;
     }
-    // Master key doesn't exist yet - this shouldn't happen in a query
-    // We'll handle creation in a mutation
     throw new Error("Master key not initialized. Call initializeMasterKey first.");
   },
 });
@@ -47,16 +44,15 @@ export const getOrCreateMasterKey = internalQuery({
 export const initializeMasterKey = internalMutation({
   args: {},
   returns: v.null(),
-  handler: async (ctx): Promise<null> => {
+  handler: async (ctx) => {
     const existing = await ctx.db.query("masterKey").first();
     if (existing) {
-      return null; // Already initialized
+      return null;
     }
 
     const masterKey = generateKey();
     await ctx.db.insert("masterKey", {
       key: masterKey,
-      _createdAt: Date.now(),
     });
     return null;
   },
@@ -69,7 +65,7 @@ export const initializeMasterKey = internalMutation({
 export const ensureMasterKey = internalMutation({
   args: {},
   returns: v.string(),
-  handler: async (ctx): Promise<string> => {
+  handler: async (ctx) => {
     const existing = await ctx.db.query("masterKey").first();
     if (existing) {
       return existing.key;
@@ -78,7 +74,6 @@ export const ensureMasterKey = internalMutation({
     const masterKey = generateKey();
     await ctx.db.insert("masterKey", {
       key: masterKey,
-      _createdAt: Date.now(),
     });
     return masterKey;
   },
@@ -87,8 +82,6 @@ export const ensureMasterKey = internalMutation({
 /**
  * Get or create a KEK for a user.
  * The KEK is returned encrypted with the master key - caller must unwrap it.
- *
- * Returns: { encryptedKek, kekIv } or creates new if doesn't exist.
  */
 export const getOrCreateUserKek = internalMutation({
   args: {
@@ -100,7 +93,6 @@ export const getOrCreateUserKek = internalMutation({
     kekIv: v.string(),
   }),
   handler: async (ctx, args) => {
-    // Check if user already has a KEK
     const existing = await ctx.db
       .query("userKeys")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -113,20 +105,15 @@ export const getOrCreateUserKek = internalMutation({
       };
     }
 
-    // Generate new KEK for this user
     const newKek = generateKey();
     const kekIv = generateIV();
-
-    // Wrap (encrypt) the KEK with the master key
     const encryptedKek = await wrapKey(newKek, args.masterKey, kekIv);
 
-    // Store the encrypted KEK
     await ctx.db.insert("userKeys", {
       userId: args.userId,
       encryptedKek,
       kekIv,
       version: 1,
-      _createdAt: Date.now(),
     });
 
     return { encryptedKek, kekIv };
@@ -137,10 +124,4 @@ export const getOrCreateUserKek = internalMutation({
  * Decrypt a user's KEK using the master key.
  * Internal only - returns the raw KEK for use in encryption/decryption.
  */
-export async function decryptUserKek(
-  encryptedKek: string,
-  kekIv: string,
-  masterKey: string
-): Promise<string> {
-  return unwrapKey(encryptedKek, masterKey, kekIv);
-}
+export { unwrapKey as decryptUserKek } from "./crypto.js";

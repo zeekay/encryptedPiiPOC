@@ -30,8 +30,6 @@ export default defineSchema({
     algorithm: v.string(),
     // Version number for key rotation support
     version: v.number(),
-    // Timestamp for auditing
-    _createdAt: v.number(),
   })
     .index("by_ref", ["ref"])
     .index("by_owner", ["ownerId"]),
@@ -49,8 +47,6 @@ export default defineSchema({
     kekIv: v.string(),
     // Version for key rotation
     version: v.number(),
-    // Timestamp
-    _createdAt: v.number(),
   }).index("by_user", ["userId"]),
 
   /**
@@ -65,7 +61,5 @@ export default defineSchema({
   masterKey: defineTable({
     // Base64-encoded 256-bit master key
     key: v.string(),
-    // When the key was generated
-    _createdAt: v.number(),
   }),
 });
