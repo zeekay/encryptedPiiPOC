@@ -1,0 +1,47 @@
+{
+  "name": "@convex-dev/encrypted-pii",
+  "version": "0.1.0",
+  "description": "Encrypted PII field storage component for Convex",
+  "type": "module",
+  "main": "./dist/client.js",
+  "types": "./dist/client.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./convex.config": {
+      "@convex-dev/component-source": "./src/component/convex.config.ts",
+      "types": "./dist/component/convex.config.d.ts",
+      "import": "./dist/component/convex.config.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": {
+    "convex": "^1.17.0"
+  },
+  "devDependencies": {
+    "convex": "^1.17.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "convex",
+    "convex-component",
+    "encryption",
+    "pii",
+    "privacy"
+  ],
+  "license": "MIT"
+}
