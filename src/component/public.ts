@@ -113,6 +113,73 @@ export const get = mutation({
 });
 
 /**
+ * Retrieve and decrypt multiple field values in a single call.
+ * Optimized for performance - fetches user KEK once per unique owner.
+ */
+export const getBatch = mutation({
+  args: {
+    items: v.array(
+      v.object({
+        ref: v.string(),
+        ownerId: v.string(),
+      })
+    ),
+  },
+  returns: v.array(
+    v.object({
+      ref: v.string(),
+      value: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    if (args.items.length === 0) {
+      return [];
+    }
+
+    // Get master key once
+    const masterKey = await ctx.runMutation(internal.keys.ensureMasterKey, {});
+
+    // Cache user KEKs by ownerId to avoid redundant lookups
+    const userKekCache = new Map<string, string>();
+
+    const results: Array<{ ref: string; value: string | null }> = [];
+
+    for (const item of args.items) {
+      // Fetch the encrypted field
+      const field = await ctx.db
+        .query("encryptedFields")
+        .withIndex("by_ref", (q) => q.eq("ref", item.ref))
+        .first();
+
+      if (!field || field.ownerId !== item.ownerId) {
+        results.push({ ref: item.ref, value: null });
+        continue;
+      }
+
+      // Get or cache the user's KEK
+      let userKek = userKekCache.get(item.ownerId);
+      if (!userKek) {
+        const { encryptedKek, kekIv } = await ctx.runMutation(
+          internal.keys.getOrCreateUserKek,
+          { userId: item.ownerId, masterKey }
+        );
+        userKek = await unwrapKey(encryptedKek, masterKey, kekIv);
+        userKekCache.set(item.ownerId, userKek);
+      }
+
+      // Decrypt the field
+      const { dek: encryptedDek, dekIv } = JSON.parse(field.encryptedDek);
+      const fieldDek = await unwrapKey(encryptedDek, userKek, dekIv);
+      const plaintext = await decrypt(field.ciphertext, fieldDek, field.iv);
+
+      results.push({ ref: item.ref, value: plaintext });
+    }
+
+    return results;
+  },
+});
+
+/**
  * Delete an encrypted field.
  */
 export const deleteField = mutation({

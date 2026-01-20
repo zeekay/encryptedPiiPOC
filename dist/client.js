@@ -52,6 +52,29 @@ export class EncryptedPII {
         return ctx.runMutation(this.component.public.get, { ownerId, ref });
     }
     /**
+     * Retrieve and decrypt multiple values in a single call.
+     * Much faster than calling get() multiple times.
+     *
+     * @param ctx - Convex mutation context
+     * @param items - Array of { ownerId, ref } to decrypt
+     * @returns Array of { ref, value } in the same order as input
+     *
+     * @example
+     * ```typescript
+     * const results = await encryptedPii.getBatch(ctx, [
+     *   { ownerId: user1Id, ref: user1SsnRef },
+     *   { ownerId: user1Id, ref: user1CcRef },
+     *   { ownerId: user2Id, ref: user2SsnRef },
+     * ]);
+     * // results[0].value = user1's SSN
+     * // results[1].value = user1's credit card
+     * // results[2].value = user2's SSN
+     * ```
+     */
+    async getBatch(ctx, items) {
+        return ctx.runMutation(this.component.public.getBatch, { items });
+    }
+    /**
      * Delete an encrypted value.
      *
      * @param ctx - Convex mutation context
