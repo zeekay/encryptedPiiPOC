@@ -120,7 +120,7 @@ export const storeSSN = mutation({
 });
 ```
 
-### Decrypting Data
+### Decrypting Data (in Mutations)
 
 ```typescript
 export const getSSN = mutation({
@@ -136,6 +136,27 @@ export const getSSN = mutation({
     // Step 3: Decrypt the field
     const ssn = await pii.decrypt(user.ssn);
 
+    return { ssn };
+  },
+});
+```
+
+### Decrypting Data (in Queries)
+
+Use `forUserQuery()` to decrypt in queries. Returns null if the user has no encryption key yet.
+
+```typescript
+export const getSSN = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    // forUserQuery returns null if user has no key yet
+    const pii = await encryptedPii.forUserQuery(ctx, args.userId);
+    if (!pii) return null;
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+
+    const ssn = await pii.decrypt(user.ssn);
     return { ssn };
   },
 });
@@ -302,13 +323,27 @@ const encryptedPii = new EncryptedPII(components.encryptedPii);
 
 #### `forUser(ctx, ownerId): Promise<UserPII>`
 
-Get a PII helper for a specific user. This fetches the user's encryption key once from the component.
+Get a PII helper for a specific user (for mutations). Creates the user's encryption key if it doesn't exist yet.
 
 - `ctx` - Convex mutation context
 - `ownerId` - String identifying the user (typically `ctx.auth.getUserIdentity().subject` or a user document ID)
 
 ```typescript
 const pii = await encryptedPii.forUser(ctx, userId);
+```
+
+#### `forUserQuery(ctx, ownerId): Promise<UserPII | null>`
+
+Get a PII helper for a specific user (for queries - read-only). Returns null if the user has no encryption key yet.
+
+Use this in queries when you only need to decrypt existing data. The user's key must have been created by a prior `forUser()` call in a mutation.
+
+- `ctx` - Convex query context
+- `ownerId` - String identifying the user
+
+```typescript
+const pii = await encryptedPii.forUserQuery(ctx, userId);
+if (!pii) return null; // User has no encrypted data yet
 ```
 
 #### `deleteAllUserData(ctx, ownerId): Promise<number>`
@@ -613,9 +648,10 @@ Make sure you're importing from the correct location:
 import { piiField } from "@convex-dev/encrypted-pii";
 ```
 
-### "forUser() requires mutation context"
+### Using forUser() vs forUserQuery()
 
-The `forUser()` method requires a mutation context (not query) because it may need to create the user's encryption key on first use.
+- `forUser()` requires a **mutation** context because it may create the user's encryption key on first use. Use this when encrypting data or when you need to ensure the key exists.
+- `forUserQuery()` works in **query** context but returns `null` if the user has no key yet. Use this for read-only decryption when you know the user already has encrypted data.
 
 ---
 

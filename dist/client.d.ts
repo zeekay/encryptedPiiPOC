@@ -93,9 +93,12 @@ export declare class EncryptedPII {
     private component;
     constructor(component: AnyComponent);
     /**
-     * Get a PII helper for a specific user.
+     * Get a PII helper for a specific user (for mutations).
      * This fetches the user's encryption key once, then all subsequent
      * encrypt/decrypt operations happen locally (no isolate boundary crossing).
+     *
+     * Creates the user's encryption key if it doesn't exist yet.
+     * Use this in mutations when you need to encrypt OR decrypt.
      *
      * @param ctx - Convex mutation context
      * @param ownerId - The user who owns this data (typically user ID from auth)
@@ -116,6 +119,32 @@ export declare class EncryptedPII {
      * ```
      */
     forUser(ctx: AnyCtx, ownerId: string): Promise<UserPII>;
+    /**
+     * Get a PII helper for a specific user (for queries - read-only).
+     * Use this in queries when you only need to decrypt existing data.
+     *
+     * Returns null if the user has no encryption key yet (no encrypted data).
+     * The user's key must have been created by a prior forUser() call in a mutation.
+     *
+     * @param ctx - Convex query context
+     * @param ownerId - The user who owns this data
+     * @returns UserPII helper with decrypt() methods, or null if user has no key
+     *
+     * @example
+     * ```typescript
+     * export const getSSN = query({
+     *   args: { userId: v.id("users") },
+     *   handler: async (ctx, args) => {
+     *     const pii = await encryptedPii.forUserQuery(ctx, args.userId);
+     *     if (!pii) return null; // User has no encrypted data yet
+     *
+     *     const user = await ctx.db.get(args.userId);
+     *     return { ssn: await pii.decrypt(user?.ssn) };
+     *   },
+     * });
+     * ```
+     */
+    forUserQuery(ctx: AnyCtx, ownerId: string): Promise<UserPII | null>;
     /**
      * @deprecated Use `forUser()` instead for better performance.
      * Store an encrypted value in the component's tables.

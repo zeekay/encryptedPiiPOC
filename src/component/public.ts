@@ -331,6 +331,9 @@ export const getRawEncryptedData = query({
  *
  * The returned key should be used with the crypto utilities to encrypt/decrypt
  * data stored directly in the user's documents.
+ *
+ * This is a MUTATION because it may create the user's key on first use.
+ * For read-only operations (queries), use getUserKeyQuery instead.
  */
 export const getUserKey = mutation({
   args: {
@@ -349,6 +352,40 @@ export const getUserKey = mutation({
 
     // Unwrap and return the user's KEK
     const userKek = await unwrapKey(encryptedKek, masterKey, kekIv);
+    return userKek;
+  },
+});
+
+/**
+ * Get the user's decryption key (KEK) for read-only operations.
+ * Returns null if the user has no key yet (meaning they have no encrypted data).
+ *
+ * This is a QUERY, safe to use in queries for decryption.
+ * The key must already exist (created via a previous forUser() call in a mutation).
+ */
+export const getUserKeyQuery = query({
+  args: {
+    ownerId: v.string(),
+  },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    // Get master key (must exist already)
+    const masterKeyDoc = await ctx.db.query("masterKey").first();
+    if (!masterKeyDoc) {
+      return null;
+    }
+    const masterKey = masterKeyDoc.key;
+
+    // Get user's KEK (must exist already)
+    const userKeyInfo = await ctx.runQuery(internal.keys.getUserKekQuery, {
+      userId: args.ownerId,
+    });
+    if (!userKeyInfo) {
+      return null;
+    }
+
+    // Unwrap and return the user's KEK
+    const userKek = await unwrapKey(userKeyInfo.encryptedKek, masterKey, userKeyInfo.kekIv);
     return userKek;
   },
 });

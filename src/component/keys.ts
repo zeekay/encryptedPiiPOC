@@ -121,6 +121,38 @@ export const getOrCreateUserKek = internalMutation({
 });
 
 /**
+ * Get an existing user KEK (query-safe, doesn't create).
+ * Returns null if the user has no key yet.
+ */
+export const getUserKekQuery = internalQuery({
+  args: {
+    userId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      encryptedKek: v.string(),
+      kekIv: v.string(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("userKeys")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .first();
+
+    if (!existing) {
+      return null;
+    }
+
+    return {
+      encryptedKek: existing.encryptedKek,
+      kekIv: existing.kekIv,
+    };
+  },
+});
+
+/**
  * Decrypt a user's KEK using the master key.
  * Internal only - returns the raw KEK for use in encryption/decryption.
  */
