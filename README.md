@@ -479,6 +479,126 @@ This component does NOT protect against:
 
 ---
 
+## Migration Guide
+
+### Migrating from Legacy API to forUser() API
+
+The legacy API (`store()`/`get()`) stored encrypted data in the component's tables. The new `forUser()` API stores encrypted data directly in your documents, which is faster and gives you more control.
+
+#### Before (Legacy API)
+
+```typescript
+// Schema - stored references to component's tables
+users: defineTable({
+  name: v.string(),
+  ssnRef: v.optional(v.string()),  // Just a reference string
+})
+
+// Storing
+const ssnRef = await encryptedPii.store(ctx, userId, ssn);
+await ctx.db.patch(userId, { ssnRef });
+
+// Reading
+const ssn = await encryptedPii.get(ctx, userId, user.ssnRef);
+```
+
+#### After (New forUser() API)
+
+```typescript
+// Schema - stores encrypted data directly
+import { piiField } from "@convex-dev/encrypted-pii";
+
+users: defineTable({
+  name: v.string(),
+  ssn: v.optional(piiField()),  // EncryptedField object
+})
+
+// Storing
+const pii = await encryptedPii.forUser(ctx, userId);
+await ctx.db.patch(userId, { ssn: await pii.encrypt(ssn) });
+
+// Reading
+const pii = await encryptedPii.forUser(ctx, userId);
+const ssn = await pii.decrypt(user.ssn);
+```
+
+#### Migration Steps
+
+1. **Update your schema** to use `piiField()` instead of `v.string()`:
+
+```typescript
+// Before
+ssnRef: v.optional(v.string()),
+
+// After
+ssn: v.optional(piiField()),
+```
+
+2. **Create a migration mutation** to re-encrypt existing data:
+
+```typescript
+import { encryptedPii } from "./pii";
+
+export const migrateUserPII = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user?.ssnRef) return; // No data to migrate
+
+    // Decrypt using legacy API
+    const ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
+    if (!ssn) return;
+
+    // Re-encrypt using new API
+    const pii = await encryptedPii.forUser(ctx, args.userId);
+
+    // Update document with new format and remove old ref
+    await ctx.db.patch(args.userId, {
+      ssn: await pii.encrypt(ssn),
+      ssnRef: undefined,  // Remove old reference
+    });
+
+    // Optionally delete old data from component
+    await encryptedPii.delete(ctx, args.userId, user.ssnRef);
+  },
+});
+```
+
+3. **Run migration** for all users:
+
+```typescript
+export const migrateAllUsers = mutation({
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    let migrated = 0;
+
+    for (const user of users) {
+      if (user.ssnRef && !user.ssn) {
+        // Has old format, needs migration
+        const ssn = await encryptedPii.get(ctx, user._id, user.ssnRef);
+        if (ssn) {
+          const pii = await encryptedPii.forUser(ctx, user._id);
+          await ctx.db.patch(user._id, {
+            ssn: await pii.encrypt(ssn),
+            ssnRef: undefined,
+          });
+          await encryptedPii.delete(ctx, user._id, user.ssnRef);
+          migrated++;
+        }
+      }
+    }
+
+    return { migrated };
+  },
+});
+```
+
+4. **Update all your mutations** to use the new API pattern.
+
+5. **Remove old schema fields** once migration is complete.
+
+---
+
 ## Troubleshooting
 
 ### "Cannot find module '@convex-dev/encrypted-pii'"
