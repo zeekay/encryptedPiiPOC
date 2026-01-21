@@ -324,3 +324,31 @@ export const getRawEncryptedData = query({
     };
   },
 });
+
+/**
+ * Get the user's decryption key (KEK) for use in user space.
+ * This enables encryption/decryption without crossing the isolate boundary.
+ *
+ * The returned key should be used with the crypto utilities to encrypt/decrypt
+ * data stored directly in the user's documents.
+ */
+export const getUserKey = mutation({
+  args: {
+    ownerId: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    // Get or create master key
+    const masterKey = await ctx.runMutation(internal.keys.ensureMasterKey, {});
+
+    // Get or create user's KEK
+    const { encryptedKek, kekIv } = await ctx.runMutation(
+      internal.keys.getOrCreateUserKek,
+      { userId: args.ownerId, masterKey }
+    );
+
+    // Unwrap and return the user's KEK
+    const userKek = await unwrapKey(encryptedKek, masterKey, kekIv);
+    return userKek;
+  },
+});

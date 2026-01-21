@@ -1,15 +1,15 @@
 # @convex-dev/encrypted-pii
 
-Encrypted field storage component for Convex. Store sensitive PII (SSN, credit cards, etc.) with per-user encryption keys.
+Type-safe encrypted PII field storage for Convex. Store sensitive data (SSN, credit cards, etc.) with per-user encryption keys and full TypeScript safety.
 
 ## Features
 
+- **Type-safe** - Encrypted fields are objects, not strings. TypeScript prevents accidental usage without decryption.
 - **Per-user encryption keys** - Each user gets their own Key Encryption Key (KEK)
 - **Per-field encryption** - Each value has its own Data Encryption Key (DEK)
 - **AES-256-GCM** - Industry-standard authenticated encryption
-- **Storage-like API** - Familiar pattern: `store()` returns a ref, `get()` retrieves by ref
-- **GDPR compliant** - `deleteAllUserData()` removes all encrypted data for a user
-- **Batch operations** - `getBatch()` for efficient bulk decryption
+- **Fast** - Encryption/decryption happens in your code, not across isolate boundaries
+- **GDPR compliant** - Easy deletion of all user data
 
 ## Installation
 
@@ -17,9 +17,19 @@ Encrypted field storage component for Convex. Store sensitive PII (SSN, credit c
 npm install @convex-dev/encrypted-pii
 ```
 
-## Setup
+Or install from a local tarball:
 
-### 1. Add the component to your Convex app
+```bash
+npm install /path/to/convex-dev-encrypted-pii-0.1.0.tgz
+```
+
+---
+
+## Complete Setup Guide
+
+### Step 1: Configure the Component
+
+Create or update your `convex/convex.config.ts`:
 
 ```typescript
 // convex/convex.config.ts
@@ -32,19 +42,57 @@ app.use(encryptedPii);
 export default app;
 ```
 
-### 2. Create the client
+### Step 2: Define Your Schema with PII Fields
+
+Use the `piiField()` validator for encrypted fields:
 
 ```typescript
-// convex/pii.ts (or wherever you want)
+// convex/schema.ts
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+import { piiField } from "@convex-dev/encrypted-pii";
+
+export default defineSchema({
+  users: defineTable({
+    // Regular fields
+    name: v.string(),
+    email: v.string(),
+
+    // Encrypted PII fields - use piiField() validator
+    ssn: v.optional(piiField()),
+    creditCard: v.optional(piiField()),
+    bankAccount: v.optional(piiField()),
+  }),
+});
+```
+
+**Important:** The `piiField()` validator creates an `EncryptedField` type (an object), not a string. This provides type safety.
+
+### Step 3: Create the PII Client
+
+Create a helper file to instantiate the client:
+
+```typescript
+// convex/pii.ts
 import { EncryptedPII } from "@convex-dev/encrypted-pii";
 import { components } from "./_generated/api";
 
 export const encryptedPii = new EncryptedPII(components.encryptedPii);
 ```
 
-## Usage
+### Step 4: Run Convex Dev
 
-### Storing encrypted data
+Push your schema and component:
+
+```bash
+npx convex dev
+```
+
+---
+
+## Usage Examples
+
+### Encrypting and Storing Data
 
 ```typescript
 // convex/users.ts
@@ -52,188 +100,404 @@ import { mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { encryptedPii } from "./pii";
 
-export const storeSsn = mutation({
+export const storeSSN = mutation({
   args: {
     userId: v.id("users"),
-    ssn: v.string(),
+    ssn: v.string()
   },
   handler: async (ctx, args) => {
-    // Encrypt and store - returns an opaque reference string
-    const ssnRef = await encryptedPii.store(ctx, args.userId, args.ssn);
+    // Step 1: Get PII helper for this user (fetches their encryption key once)
+    const pii = await encryptedPii.forUser(ctx, args.userId);
 
-    // Store the reference in your document
-    await ctx.db.patch(args.userId, { ssnRef });
+    // Step 2: Encrypt the value
+    const encryptedSSN = await pii.encrypt(args.ssn);
 
-    return ssnRef;
+    // Step 3: Store directly in your document
+    await ctx.db.patch(args.userId, {
+      ssn: encryptedSSN,
+    });
   },
 });
 ```
 
-### Retrieving encrypted data
+### Decrypting Data
 
 ```typescript
-export const getDecryptedPii = mutation({
-  args: {
-    userId: v.id("users"),
-  },
+export const getSSN = mutation({
+  args: { userId: v.id("users") },
   handler: async (ctx, args) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user?.ssnRef) return null;
+    // Step 1: Get PII helper for this user
+    const pii = await encryptedPii.forUser(ctx, args.userId);
 
-    // Decrypt using the reference
-    const ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
+    // Step 2: Fetch the document
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+
+    // Step 3: Decrypt the field
+    const ssn = await pii.decrypt(user.ssn);
 
     return { ssn };
   },
 });
 ```
 
-### Batch retrieval (recommended for multiple fields)
+### Storing Multiple PII Fields
 
 ```typescript
-export const getAllPii = mutation({
+export const storeAllPII = mutation({
   args: {
     userId: v.id("users"),
+    ssn: v.string(),
+    creditCard: v.string(),
   },
   handler: async (ctx, args) => {
+    const pii = await encryptedPii.forUser(ctx, args.userId);
+
+    // Encrypt multiple fields
+    await ctx.db.patch(args.userId, {
+      ssn: await pii.encrypt(args.ssn),
+      creditCard: await pii.encrypt(args.creditCard),
+    });
+  },
+});
+```
+
+### Decrypting Multiple Fields
+
+Use `decryptMany()` for convenience:
+
+```typescript
+export const getAllPII = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const pii = await encryptedPii.forUser(ctx, args.userId);
     const user = await ctx.db.get(args.userId);
     if (!user) return null;
 
-    // Decrypt multiple fields in one call
-    const results = await encryptedPii.getBatch(ctx, [
-      { ownerId: args.userId, ref: user.ssnRef },
-      { ownerId: args.userId, ref: user.creditCardRef },
-    ]);
+    // Decrypt multiple fields at once
+    const decrypted = await pii.decryptMany({
+      ssn: user.ssn,
+      creditCard: user.creditCard,
+    });
 
     return {
-      ssn: results[0].value,
-      creditCard: results[1].value,
+      ssn: decrypted.ssn,           // string | null
+      creditCard: decrypted.creditCard,  // string | null
     };
   },
 });
 ```
 
-### Deleting encrypted data
+### Creating a User with PII
 
 ```typescript
-// Delete a single field
-await encryptedPii.delete(ctx, userId, ssnRef);
-
-// Delete ALL encrypted data for a user (GDPR "right to be forgotten")
-const fieldsDeleted = await encryptedPii.deleteAllUserData(ctx, userId);
-```
-
-### Checking existence (without decrypting)
-
-```typescript
-// Check if a reference exists and belongs to a user (query, no decryption)
-const exists = await encryptedPii.exists(ctx, userId, ssnRef);
-
-// List all encrypted field references for a user
-const refs = await encryptedPii.listRefs(ctx, userId);
-// Returns: [{ ref: "epii_xxx", createdAt: 1234567890 }, ...]
-```
-
-## Schema integration
-
-Store the encrypted field references as strings in your schema:
-
-```typescript
-// convex/schema.ts
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
-
-export default defineSchema({
-  users: defineTable({
+export const createUser = mutation({
+  args: {
     name: v.string(),
     email: v.string(),
-    // Encrypted PII references
-    ssnRef: v.optional(v.string()),
-    creditCardRef: v.optional(v.string()),
-  }),
+    ssn: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // First create the user without PII
+    const userId = await ctx.db.insert("users", {
+      name: args.name,
+      email: args.email,
+    });
+
+    // Then encrypt and add PII
+    const pii = await encryptedPii.forUser(ctx, userId);
+    await ctx.db.patch(userId, {
+      ssn: await pii.encrypt(args.ssn),
+    });
+
+    return userId;
+  },
 });
 ```
 
+### Deleting User Data (GDPR Compliance)
+
+```typescript
+export const deleteUserPII = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    // Step 1: Clear PII fields from your document
+    await ctx.db.patch(args.userId, {
+      ssn: undefined,
+      creditCard: undefined,
+      bankAccount: undefined,
+    });
+
+    // Step 2: Delete the user's encryption key from the component
+    // This ensures their key can never be used again
+    await encryptedPii.deleteAllUserData(ctx, args.userId);
+  },
+});
+```
+
+### Checking if PII Exists
+
+```typescript
+export const hasPII = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+
+    return {
+      hasSSN: user?.ssn !== undefined,
+      hasCreditCard: user?.creditCard !== undefined,
+    };
+  },
+});
+```
+
+---
+
+## Type Safety
+
+The `piiField()` validator creates an `EncryptedField` type that TypeScript won't let you use as a string:
+
+```typescript
+const user = await ctx.db.get(userId);
+
+// ❌ Type error - EncryptedField is not assignable to string
+console.log(`SSN: ${user.ssn}`);
+sendEmail(user.ssn);
+JSON.stringify({ ssn: user.ssn }); // Works but exposes encrypted blob
+
+// ✅ Correct - must decrypt first
+const pii = await encryptedPii.forUser(ctx, userId);
+const ssn = await pii.decrypt(user.ssn);
+console.log(`SSN: ${ssn}`);
+```
+
+### The EncryptedField Type
+
+```typescript
+type EncryptedField = {
+  __encrypted: true;  // Marker for identification
+  v: number;          // Version (for future migrations)
+  c: string;          // Ciphertext (base64)
+  i: string;          // IV (base64)
+  k: string;          // Encrypted DEK (base64)
+};
+```
+
+---
+
 ## API Reference
 
-### `store(ctx, ownerId, value)`
+### `EncryptedPII` Class
 
-Encrypt and store a value.
+#### `constructor(component)`
 
-- `ctx` - Convex mutation context
-- `ownerId` - String identifying the owner (typically user ID)
-- `value` - Plaintext string to encrypt
-- Returns: `EncryptedFieldRef` - opaque string to store in your document
+Create a new EncryptedPII client.
 
-### `get(ctx, ownerId, ref)`
+```typescript
+import { EncryptedPII } from "@convex-dev/encrypted-pii";
+import { components } from "./_generated/api";
 
-Retrieve and decrypt a value.
+const encryptedPii = new EncryptedPII(components.encryptedPii);
+```
 
-- `ctx` - Convex mutation context
-- `ownerId` - Must match the original owner
-- `ref` - Reference returned by `store()`
-- Returns: `string | null` - decrypted value, or null if not found/unauthorized
+#### `forUser(ctx, ownerId): Promise<UserPII>`
 
-### `getBatch(ctx, items)`
-
-Retrieve and decrypt multiple values efficiently.
+Get a PII helper for a specific user. This fetches the user's encryption key once from the component.
 
 - `ctx` - Convex mutation context
-- `items` - Array of `{ ownerId, ref }`
-- Returns: `Array<{ ref, value }>` - results in same order as input
+- `ownerId` - String identifying the user (typically `ctx.auth.getUserIdentity().subject` or a user document ID)
 
-### `delete(ctx, ownerId, ref)`
+```typescript
+const pii = await encryptedPii.forUser(ctx, userId);
+```
 
-Delete an encrypted value.
+#### `deleteAllUserData(ctx, ownerId): Promise<number>`
 
-- Returns: `boolean` - true if deleted
+Delete all encryption keys for a user. Call this for GDPR compliance.
 
-### `deleteAllUserData(ctx, ownerId)`
+```typescript
+const keysDeleted = await encryptedPii.deleteAllUserData(ctx, userId);
+```
 
-Delete ALL encrypted data for a user (GDPR compliance).
+---
 
-- Returns: `number` - count of fields deleted
+### `UserPII` Class
 
-### `exists(ctx, ownerId, ref)`
+Returned by `encryptedPii.forUser()`. All methods run locally (no isolate boundary crossing).
 
-Check if a reference exists (query, no decryption).
+#### `encrypt(plaintext): Promise<EncryptedField>`
 
-- Returns: `boolean`
+Encrypt a string value. Returns an `EncryptedField` object to store in your document.
 
-### `listRefs(ctx, ownerId)`
+```typescript
+const encrypted = await pii.encrypt("123-45-6789");
+await ctx.db.patch(userId, { ssn: encrypted });
+```
 
-List all encrypted field references for a user.
+#### `decrypt(field): Promise<string | null>`
 
-- Returns: `Array<{ ref, createdAt }>`
+Decrypt an encrypted field. Returns null if the field is null/undefined.
 
-### `getRawEncryptedData(ctx, ownerId, ref)`
+```typescript
+const ssn = await pii.decrypt(user.ssn);
+```
 
-Get raw encrypted data for debugging/demo purposes.
+#### `decryptMany(fields): Promise<Record<string, string | null>>`
 
-- Returns: `{ ref, ownerId, ciphertext, encryptedDek, iv, algorithm, version, createdAt } | null`
+Decrypt multiple fields at once. Returns an object with the same keys.
+
+```typescript
+const { ssn, creditCard } = await pii.decryptMany({
+  ssn: user.ssn,
+  creditCard: user.creditCard,
+});
+```
+
+---
+
+### Schema Helper
+
+#### `piiField()`
+
+Convex validator for encrypted PII fields. Use in your schema.
+
+```typescript
+import { piiField } from "@convex-dev/encrypted-pii";
+
+// In schema:
+ssn: v.optional(piiField()),
+```
+
+---
+
+## What Gets Stored
+
+Encrypted fields are stored as objects in your Convex documents:
+
+```json
+{
+  "_id": "jh7abc123...",
+  "_creationTime": 1234567890,
+  "name": "John Doe",
+  "email": "john@example.com",
+  "ssn": {
+    "__encrypted": true,
+    "v": 1,
+    "c": "base64-encoded-ciphertext...",
+    "i": "base64-encoded-iv...",
+    "k": "base64-encrypted-dek:base64-dek-iv"
+  }
+}
+```
+
+The `__encrypted: true` marker makes it obvious in the Convex dashboard that data is encrypted.
+
+---
 
 ## Architecture
 
+### Key Hierarchy
+
 ```
 Master Key (1 per component instance)
+    │
     └── User KEK (1 per user)
+            │
             └── Field DEK (1 per encrypted value)
+                    │
                     └── Encrypted Value (AES-256-GCM)
 ```
 
-- **Master Key**: Generated once, encrypts all user KEKs
-- **User KEK (Key Encryption Key)**: Per-user key that encrypts their field DEKs
-- **Field DEK (Data Encryption Key)**: Per-value key for the actual encryption
-- **Envelope Encryption**: DEKs are encrypted with KEKs, KEKs are encrypted with master key
+### How It Works
 
-## Security considerations
+1. **Master Key**: Generated once when the component is first used. Stored in the component's isolated tables. Encrypts all user KEKs.
 
-- Data is encrypted at rest with AES-256-GCM
-- Each user has isolated encryption keys
-- Only the owning user's ownerId can decrypt their data
-- The component stores keys in isolated tables (separate from your app's data)
+2. **User KEK (Key Encryption Key)**: Generated when `forUser()` is first called for a user. Encrypted with the master key before storage. Used to encrypt/decrypt that user's field DEKs.
 
-**Note**: This provides defense-in-depth but is server-side encryption. The Convex operator (and anyone with database access) could theoretically access the master key. For true zero-knowledge encryption, client-side encryption is required (not yet implemented).
+3. **Field DEK (Data Encryption Key)**: Generated fresh for each `encrypt()` call. Encrypted with the user's KEK. Stored alongside the ciphertext in the `EncryptedField` object.
+
+4. **Encryption**: AES-256-GCM with random 96-bit IVs. Provides both confidentiality and authenticity.
+
+### Data Flow
+
+**Encrypting:**
+```
+plaintext
+  → generate random DEK
+  → encrypt plaintext with DEK
+  → encrypt DEK with user's KEK
+  → return EncryptedField object
+```
+
+**Decrypting:**
+```
+EncryptedField
+  → decrypt DEK using user's KEK
+  → decrypt ciphertext using DEK
+  → return plaintext
+```
+
+---
+
+## Performance
+
+The `forUser()` API is optimized for performance:
+
+1. **One key fetch** - `forUser()` fetches the user's KEK once from the component (one isolate boundary crossing)
+2. **Local crypto** - All `encrypt()`/`decrypt()` calls use Web Crypto API locally
+3. **No more boundary crossings** - After getting the key, everything runs in your code
+
+This is significantly faster than an API that crosses the isolate boundary for every encrypt/decrypt operation.
+
+---
+
+## Security Considerations
+
+### What This Provides
+
+- Encryption at rest with AES-256-GCM
+- Per-user key isolation
+- Per-field unique encryption keys
+- Envelope encryption (keys encrypting keys)
+
+### What This Does NOT Provide
+
+- **Zero-knowledge encryption** - The server (Convex) can theoretically access the master key since it's stored in the component's tables. A malicious operator could decrypt data.
+- **Client-side encryption** - Keys are managed server-side. For true zero-knowledge, you'd need keys derived from user passwords that never leave the client.
+
+### Threat Model
+
+This component protects against:
+- Accidental exposure of PII in logs/dashboards
+- Database dumps containing plaintext PII
+- Developers accidentally accessing raw PII
+
+This component does NOT protect against:
+- Malicious Convex operators
+- Compromised server-side code
+- Someone with full database access who also accesses the component's tables
+
+---
+
+## Troubleshooting
+
+### "Cannot find module '@convex-dev/encrypted-pii'"
+
+Make sure you've installed the package and run `npx convex dev` to generate types.
+
+### Type errors with `piiField()`
+
+Make sure you're importing from the correct location:
+
+```typescript
+import { piiField } from "@convex-dev/encrypted-pii";
+```
+
+### "forUser() requires mutation context"
+
+The `forUser()` method requires a mutation context (not query) because it may need to create the user's encryption key on first use.
+
+---
 
 ## License
 

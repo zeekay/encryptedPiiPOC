@@ -52,6 +52,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         string | null,
         Name
       >;
+      getBatch: FunctionReference<
+        "mutation",
+        "internal",
+        { items: Array<{ ownerId: string; ref: string }> },
+        Array<{ ref: string; value: string | null }>,
+        Name
+      >;
       getRawEncryptedData: FunctionReference<
         "query",
         "internal",
@@ -66,6 +73,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           ref: string;
           version: number;
         } | null,
+        Name
+      >;
+      getUserKey: FunctionReference<
+        "mutation",
+        "internal",
+        { ownerId: string },
+        string,
         Name
       >;
       listRefs: FunctionReference<

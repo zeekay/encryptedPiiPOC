@@ -1,9 +1,7 @@
 /**
  * @convex-dev/encrypted-pii
  *
- * Encrypted PII field storage component for Convex.
- * Provides a storage-like API for encrypting sensitive user data
- * where only the owning user can decrypt.
+ * Type-safe encrypted PII field storage for Convex.
  *
  * ## Quick Start
  *
@@ -19,82 +17,74 @@
  * export default app;
  * ```
  *
- * 2. Use PII field helpers in your schema:
+ * 2. Add PII fields to your schema:
  *
  * ```typescript
  * // convex/schema.ts
  * import { defineSchema, defineTable } from "convex/server";
  * import { v } from "convex/values";
- * import { pii } from "@convex-dev/encrypted-pii/schema";
+ * import { piiField } from "@convex-dev/encrypted-pii";
  *
  * export default defineSchema({
  *   users: defineTable({
  *     name: v.string(),
  *     email: v.string(),
- *     ssnRef: pii.field(),                  // Required encrypted field
- *     passportRef: v.optional(pii.field()), // Optional (can be omitted)
+ *     ssn: v.optional(piiField()),
+ *     creditCard: v.optional(piiField()),
  *   }),
  * });
  * ```
  *
- * 3. Store and retrieve encrypted data:
+ * 3. Encrypt and decrypt data:
  *
  * ```typescript
  * // convex/users.ts
- * import { mutation, query } from "./_generated/server";
+ * import { mutation } from "./_generated/server";
  * import { EncryptedPII } from "@convex-dev/encrypted-pii";
  * import { components } from "./_generated/api";
  *
  * const encryptedPii = new EncryptedPII(components.encryptedPii);
  *
- * export const createUser = mutation({
- *   args: { name: v.string(), email: v.string(), ssn: v.string() },
+ * export const storePII = mutation({
+ *   args: { userId: v.id("users"), ssn: v.string() },
  *   handler: async (ctx, args) => {
- *     const userId = await ctx.db.insert("users", {
- *       name: args.name,
- *       email: args.email,
- *       ssnRef: "", // Placeholder
+ *     const pii = await encryptedPii.forUser(ctx, args.userId);
+ *
+ *     await ctx.db.patch(args.userId, {
+ *       ssn: await pii.encrypt(args.ssn),
  *     });
- *
- *     // Encrypt the SSN with the user as owner
- *     const ssnRef = await encryptedPii.store(ctx, userId, args.ssn);
- *
- *     // Update with the encrypted reference
- *     await ctx.db.patch(userId, { ssnRef });
- *
- *     return userId;
  *   },
  * });
  *
- * export const getUser = mutation({
+ * export const getPII = mutation({
  *   args: { userId: v.id("users") },
  *   handler: async (ctx, args) => {
+ *     const pii = await encryptedPii.forUser(ctx, args.userId);
  *     const user = await ctx.db.get(args.userId);
- *     if (!user) return null;
  *
- *     // Decrypt the SSN (only works if caller is the owner)
- *     const ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
- *
- *     return { ...user, ssn };
+ *     return {
+ *       ssn: await pii.decrypt(user?.ssn),
+ *     };
  *   },
  * });
  * ```
  *
- * ## Security Model
+ * ## Type Safety
  *
- * - Each user gets a unique Key Encryption Key (KEK)
- * - Each field gets a unique Data Encryption Key (DEK)
- * - DEKs are encrypted with the user's KEK
- * - KEKs are encrypted with a component master key
- * - Only the owning user can decrypt their data
+ * The `piiField()` validator creates an object type that TypeScript won't
+ * let you use as a string. This prevents accidentally displaying encrypted
+ * data - you must call `pii.decrypt()` first.
  *
- * ## Migration Path to Client-Side Encryption
+ * ```typescript
+ * const user = await ctx.db.get(userId);
  *
- * This component is designed to eventually support client-side encryption
- * where keys are derived from user passwords and never touch the server.
- * The current server-side key management is a stepping stone that provides:
- * - Immediate encryption at rest
- * - Per-user key isolation
- * - API compatibility with future client-side encryption
+ * // ❌ Type error - EncryptedField is not a string
+ * console.log(`SSN: ${user.ssn}`);
+ *
+ * // ✅ Works - decrypt returns string
+ * const ssn = await pii.decrypt(user.ssn);
+ * console.log(`SSN: ${ssn}`);
+ * ```
  */
-export { EncryptedPII } from "./client.js";
+export { EncryptedPII, UserPII } from "./client.js";
+export { piiField, isEncryptedField } from "./client.js";

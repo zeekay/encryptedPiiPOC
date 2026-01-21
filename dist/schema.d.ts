@@ -1,43 +1,54 @@
 /**
- * Schema helpers for encrypted PII fields.
+ * The shape of an encrypted PII field stored in your documents.
+ * This is an object (not a string) so TypeScript prevents accidental usage.
+ */
+export type EncryptedField = {
+    /** Marker that identifies this as encrypted data */
+    __encrypted: true;
+    /** Version number for future migrations */
+    v: number;
+    /** Base64-encoded ciphertext (AES-256-GCM) */
+    c: string;
+    /** Base64-encoded initialization vector */
+    i: string;
+    /** Base64-encoded DEK, encrypted with user's KEK */
+    k: string;
+};
+/**
+ * Convex validator for encrypted PII fields.
+ * Use this in your schema to get type-safe encrypted fields.
  *
- * For encrypted PII fields, use `v.string()` in your schema - the encrypted
- * reference is stored as a string prefixed with "epii_".
- *
- * Example usage:
+ * @example
  * ```typescript
  * import { defineSchema, defineTable } from "convex/server";
  * import { v } from "convex/values";
+ * import { piiField } from "@convex-dev/encrypted-pii";
  *
  * export default defineSchema({
  *   users: defineTable({
  *     name: v.string(),
  *     email: v.string(),
- *     // PII fields - store the encrypted reference (v.string())
- *     ssnRef: v.string(),              // Required PII field
- *     passportRef: v.optional(v.string()), // Optional PII field
+ *     ssn: v.optional(piiField()),
+ *     creditCard: v.optional(piiField()),
  *   }),
  * });
  * ```
  */
+export declare function piiField(): import("convex/values").VObject<{
+    __encrypted: true;
+    v: number;
+    c: string;
+    i: string;
+    k: string;
+}, {
+    __encrypted: import("convex/values").VLiteral<true, "required">;
+    v: import("convex/values").VFloat64<number, "required">;
+    c: import("convex/values").VString<string, "required">;
+    i: import("convex/values").VString<string, "required">;
+    k: import("convex/values").VString<string, "required">;
+}, "required", "__encrypted" | "v" | "c" | "i" | "k">;
 /**
- * Type for encrypted PII field references.
- * This is what gets stored in your documents - a reference to the
- * encrypted data, not the data itself.
+ * Type guard to check if a value is an encrypted PII field.
  */
-export type PIIFieldRef = string;
-/**
- * Type guard to check if a string is a PII field reference.
- */
-export declare function isPIIFieldRef(value: unknown): value is PIIFieldRef;
-/**
- * Helper to define which fields in a table are PII.
- * Use this to create a runtime list of PII fields for a table.
- *
- * @example
- * ```typescript
- * const userPIIFields = definePIIFields(["ssnRef", "passportRef"]);
- * ```
- */
-export declare function definePIIFields<T extends string>(fields: T[]): T[];
+export declare function isEncryptedField(value: unknown): value is EncryptedField;
 //# sourceMappingURL=schema.d.ts.map

@@ -13,6 +13,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/client.ts", "src/schema.ts", "src/index.ts"],
+  "include": ["src/client.ts", "src/schema.ts", "src/index.ts", "src/crypto.ts"],
   "exclude": ["node_modules", "dist", "src/component"]
 }
