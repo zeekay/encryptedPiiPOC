@@ -2,6 +2,8 @@
  * Schema helpers for encrypted PII fields.
  */
 import { v } from "convex/values";
+/** Sentinel value indicating dev mode (not actually encrypted) */
+export const DEV_MODE_MARKER = "DEVELOPMENT_MODE_NOT_ENCRYPTED";
 /**
  * Convex validator for encrypted PII fields.
  * Use this in your schema to get type-safe encrypted fields.

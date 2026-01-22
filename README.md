@@ -90,6 +90,82 @@ npx convex dev
 
 ---
 
+## Dev/Prod Encryption Toggle
+
+By default, encryption is always enabled. For easier debugging in development, you can disable encryption while keeping the same data shape:
+
+```typescript
+// convex/pii.ts
+import { EncryptedPII } from "@convex-dev/encrypted-pii";
+import { components } from "./_generated/api";
+
+// Option 1: Environment variable (ENCRYPT_PII=false to disable)
+const encryptedPii = new EncryptedPII(components.encryptedPii, {
+  encryptionEnabled: process.env.ENCRYPT_PII !== "false",
+});
+
+// Option 2: Based on deployment URL
+const isProd = process.env.CONVEX_CLOUD_URL?.includes(".convex.cloud");
+const encryptedPii = new EncryptedPII(components.encryptedPii, {
+  encryptionEnabled: isProd,
+});
+```
+
+### How It Works
+
+When `encryptionEnabled: false`:
+
+- PII fields are stored in the same `EncryptedField` object shape
+- Instead of encrypted ciphertext, the `c` field contains plaintext
+- A sentinel marker `DEVELOPMENT_MODE_NOT_ENCRYPTED` in the `k` field indicates dev mode
+- Reading works transparently - dev data is detected and returned as-is
+
+**Dev mode data:**
+```json
+{
+  "__encrypted": true,
+  "v": 1,
+  "c": "123-45-6789",
+  "i": "",
+  "k": "DEVELOPMENT_MODE_NOT_ENCRYPTED"
+}
+```
+
+**Prod mode data:**
+```json
+{
+  "__encrypted": true,
+  "v": 1,
+  "c": "base64-ciphertext...",
+  "i": "base64-iv...",
+  "k": "encryptedDek:dekIv"
+}
+```
+
+### Safety Checks
+
+**Write protection:** When encryption is disabled, `wrapDb()` checks if any user encryption keys exist in the database. If keys are found, it throws an error to prevent accidentally writing plaintext to a production database.
+
+```
+Error: Cannot use wrapDb with encryption disabled: user encryption keys exist in the database.
+This is a safety check to prevent writing plaintext to a production database.
+Either enable encryption or use a fresh dev database.
+```
+
+**Read protection:** When encryption is disabled but real encrypted data is encountered (e.g., prod data copied to dev), an error is thrown:
+
+```
+Error: Cannot decrypt field "ssn": found encrypted data but encryption is disabled.
+This may happen if prod data was copied to a dev environment.
+```
+
+### Mixed Mode Reading
+
+- **Dev data with prod mode:** Works - encrypted data is detected and decrypted normally
+- **Prod data with dev mode:** Throws error - cannot decrypt without encryption enabled
+
+---
+
 ## Usage Examples
 
 ### Encrypting and Storing Data
@@ -379,15 +455,24 @@ type EncryptedField = {
 
 ### `EncryptedPII` Class
 
-#### `constructor(component)`
+#### `constructor(component, options?)`
 
 Create a new EncryptedPII client.
+
+- `component` - The encrypted PII component from `components.encryptedPii`
+- `options.encryptionEnabled` - Whether to encrypt PII fields (default: `true`). Set to `false` for dev mode.
 
 ```typescript
 import { EncryptedPII } from "@convex-dev/encrypted-pii";
 import { components } from "./_generated/api";
 
+// Production mode (default - encryption enabled)
 const encryptedPii = new EncryptedPII(components.encryptedPii);
+
+// Dev mode (plaintext stored in encrypted shape)
+const encryptedPii = new EncryptedPII(components.encryptedPii, {
+  encryptionEnabled: false,
+});
 ```
 
 #### `forUser(ctx, ownerId): Promise<UserPII>`

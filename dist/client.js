@@ -38,8 +38,9 @@
  * ```
  */
 import { generateKey, generateIV, encrypt, decrypt, wrapKey, unwrapKey, } from "./crypto.js";
+import { DEV_MODE_MARKER } from "./schema.js";
 import { WrappedDb } from "./wrappedDb.js";
-export { piiField, isEncryptedField, extractPiiFields } from "./schema.js";
+export { piiField, isEncryptedField, extractPiiFields, DEV_MODE_MARKER } from "./schema.js";
 export { WrappedDb } from "./wrappedDb.js";
 /**
  * Helper class for encrypting/decrypting PII for a specific user.
@@ -89,6 +90,10 @@ export class UserPII {
         if (!field.__encrypted) {
             throw new Error("Invalid encrypted field: missing __encrypted marker");
         }
+        // Check for dev mode marker - c contains plaintext in dev mode
+        if (field.k === DEV_MODE_MARKER) {
+            return field.c;
+        }
         // Parse the encrypted DEK and its IV
         const [encryptedDek, dekIv] = field.k.split(":");
         if (!encryptedDek || !dekIv) {
@@ -127,8 +132,9 @@ export class UserPII {
  * Instantiate once and use throughout your Convex functions.
  */
 export class EncryptedPII {
-    constructor(component) {
+    constructor(component, options) {
         this.component = component;
+        this.encryptionEnabled = options?.encryptionEnabled ?? true;
     }
     /**
      * Get a PII helper for a specific user (for mutations).
@@ -225,8 +231,19 @@ export class EncryptedPII {
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async wrapDb(ctx, ownerId, schema) {
+        if (!this.encryptionEnabled) {
+            // Safety check: ensure no real keys exist in database
+            // This prevents accidentally writing plaintext to a prod database
+            const hasKeys = await ctx.runQuery(this.component.public.hasAnyUserKeys, {});
+            if (hasKeys) {
+                throw new Error("Cannot use wrapDb with encryption disabled: user encryption keys exist in the database. " +
+                    "This is a safety check to prevent writing plaintext to a production database. " +
+                    "Either enable encryption or use a fresh dev database.");
+            }
+            return new WrappedDb(ctx, null, schema, { encryptionEnabled: false });
+        }
         const pii = await this.forUser(ctx, ownerId);
-        return new WrappedDb(ctx, pii, schema);
+        return new WrappedDb(ctx, pii, schema, { encryptionEnabled: true });
     }
     /**
      * Get a wrapped database for queries (read-only).
@@ -257,10 +274,14 @@ export class EncryptedPII {
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async wrapDbQuery(ctx, ownerId, schema) {
+        if (!this.encryptionEnabled) {
+            // Read-only, so no safety check needed - we can read dev data safely
+            return new WrappedDb(ctx, null, schema, { encryptionEnabled: false });
+        }
         const pii = await this.forUserQuery(ctx, ownerId);
         if (!pii)
             return null;
-        return new WrappedDb(ctx, pii, schema);
+        return new WrappedDb(ctx, pii, schema, { encryptionEnabled: true });
     }
     // ============================================================
     // Legacy API (stores data in component's tables)

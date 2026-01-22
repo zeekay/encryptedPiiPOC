@@ -86,7 +86,7 @@
  * console.log(`SSN: ${ssn}`);
  * ```
  */
-export { EncryptedPII, UserPII, WrappedDb } from "./client.js";
+export { EncryptedPII, UserPII, WrappedDb, DEV_MODE_MARKER } from "./client.js";
 export { piiField, isEncryptedField, extractPiiFields } from "./client.js";
-export type { EncryptedField, Decrypted } from "./client.js";
+export type { EncryptedField, Decrypted, EncryptedPIIOptions } from "./client.js";
 //# sourceMappingURL=index.d.ts.map

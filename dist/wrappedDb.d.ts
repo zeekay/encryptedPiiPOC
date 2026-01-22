@@ -19,6 +19,13 @@
  */
 import type { UserPII } from "./client.js";
 import { type EncryptedField } from "./schema.js";
+/**
+ * Options for WrappedDb.
+ */
+export interface WrappedDbOptions {
+    /** Whether encryption is enabled. When false, PII is stored as plaintext in dev mode format. */
+    encryptionEnabled: boolean;
+}
 type AnyCtx = any;
 type AnyDb = any;
 type AnyDoc = any;
@@ -44,7 +51,8 @@ export type Decrypted<T> = {
 declare class WrappedQueryBuilder {
     private builder;
     private pii;
-    constructor(builder: AnyDb, pii: UserPII);
+    private encryptionEnabled;
+    constructor(builder: AnyDb, pii: UserPII | null, encryptionEnabled: boolean);
     /**
      * Collect all results and decrypt PII fields.
      */
@@ -85,7 +93,8 @@ export declare class WrappedDb {
     private pii;
     private piiFieldsByTable;
     private allPiiFields;
-    constructor(ctx: AnyCtx, pii: UserPII, schema: AnyDoc);
+    private encryptionEnabled;
+    constructor(ctx: AnyCtx, pii: UserPII | null, schema: AnyDoc, options?: WrappedDbOptions);
     /**
      * Patch a document, automatically encrypting PII fields.
      *

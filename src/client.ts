@@ -47,12 +47,28 @@ import {
   unwrapKey,
 } from "./crypto.js";
 import type { EncryptedField } from "./schema.js";
+import { DEV_MODE_MARKER } from "./schema.js";
 import { WrappedDb } from "./wrappedDb.js";
 
 // Re-export types
 export type { EncryptedField } from "./schema.js";
-export { piiField, isEncryptedField, extractPiiFields } from "./schema.js";
-export { WrappedDb, type Decrypted } from "./wrappedDb.js";
+export { piiField, isEncryptedField, extractPiiFields, DEV_MODE_MARKER } from "./schema.js";
+export { WrappedDb, type Decrypted, type WrappedDbOptions } from "./wrappedDb.js";
+
+/**
+ * Options for the EncryptedPII client.
+ */
+export interface EncryptedPIIOptions {
+  /**
+   * Whether to encrypt PII fields. Default: true.
+   * Set to false in dev environments to store plaintext for easier debugging.
+   * Data will still use the EncryptedField shape, but with plaintext in the `c` field.
+   *
+   * Safety: If disabled, wrapDb() will check that no real user keys exist
+   * in the database to prevent accidentally writing plaintext to prod.
+   */
+  encryptionEnabled?: boolean;
+}
 
 // Use permissive types for cross-package compatibility
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,6 +133,11 @@ export class UserPII {
       throw new Error("Invalid encrypted field: missing __encrypted marker");
     }
 
+    // Check for dev mode marker - c contains plaintext in dev mode
+    if (field.k === DEV_MODE_MARKER) {
+      return field.c;
+    }
+
     // Parse the encrypted DEK and its IV
     const [encryptedDek, dekIv] = field.k.split(":");
     if (!encryptedDek || !dekIv) {
@@ -165,9 +186,11 @@ export class UserPII {
  */
 export class EncryptedPII {
   private component: AnyComponent;
+  private encryptionEnabled: boolean;
 
-  constructor(component: AnyComponent) {
+  constructor(component: AnyComponent, options?: EncryptedPIIOptions) {
     this.component = component;
+    this.encryptionEnabled = options?.encryptionEnabled ?? true;
   }
 
   /**
@@ -268,8 +291,21 @@ export class EncryptedPII {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async wrapDb(ctx: AnyCtx, ownerId: string, schema: any): Promise<WrappedDb> {
+    if (!this.encryptionEnabled) {
+      // Safety check: ensure no real keys exist in database
+      // This prevents accidentally writing plaintext to a prod database
+      const hasKeys = await ctx.runQuery(this.component.public.hasAnyUserKeys, {});
+      if (hasKeys) {
+        throw new Error(
+          "Cannot use wrapDb with encryption disabled: user encryption keys exist in the database. " +
+            "This is a safety check to prevent writing plaintext to a production database. " +
+            "Either enable encryption or use a fresh dev database."
+        );
+      }
+      return new WrappedDb(ctx, null, schema, { encryptionEnabled: false });
+    }
     const pii = await this.forUser(ctx, ownerId);
-    return new WrappedDb(ctx, pii, schema);
+    return new WrappedDb(ctx, pii, schema, { encryptionEnabled: true });
   }
 
   /**
@@ -301,9 +337,13 @@ export class EncryptedPII {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async wrapDbQuery(ctx: AnyCtx, ownerId: string, schema: any): Promise<WrappedDb | null> {
+    if (!this.encryptionEnabled) {
+      // Read-only, so no safety check needed - we can read dev data safely
+      return new WrappedDb(ctx, null, schema, { encryptionEnabled: false });
+    }
     const pii = await this.forUserQuery(ctx, ownerId);
     if (!pii) return null;
-    return new WrappedDb(ctx, pii, schema);
+    return new WrappedDb(ctx, pii, schema, { encryptionEnabled: true });
   }
 
   // ============================================================

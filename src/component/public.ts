@@ -389,3 +389,17 @@ export const getUserKeyQuery = query({
     return userKek;
   },
 });
+
+/**
+ * Check if any user encryption keys exist in the database.
+ * Used as a safety check when encryption is disabled to prevent
+ * accidentally writing plaintext to a production database.
+ */
+export const hasAnyUserKeys = query({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const key = await ctx.db.query("userKeys").first();
+    return key !== null;
+  },
+});

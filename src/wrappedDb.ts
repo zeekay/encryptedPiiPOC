@@ -19,7 +19,15 @@
  */
 
 import type { UserPII } from "./client.js";
-import { extractPiiFields, isEncryptedField, type EncryptedField } from "./schema.js";
+import { extractPiiFields, isEncryptedField, DEV_MODE_MARKER, type EncryptedField } from "./schema.js";
+
+/**
+ * Options for WrappedDb.
+ */
+export interface WrappedDbOptions {
+  /** Whether encryption is enabled. When false, PII is stored as plaintext in dev mode format. */
+  encryptionEnabled: boolean;
+}
 
 // Use permissive types for cross-package compatibility
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,11 +63,13 @@ export type Decrypted<T> = {
  */
 class WrappedQueryBuilder {
   private builder: AnyDb;
-  private pii: UserPII;
+  private pii: UserPII | null;
+  private encryptionEnabled: boolean;
 
-  constructor(builder: AnyDb, pii: UserPII) {
+  constructor(builder: AnyDb, pii: UserPII | null, encryptionEnabled: boolean) {
     this.builder = builder;
     this.pii = pii;
+    this.encryptionEnabled = encryptionEnabled;
   }
 
   /**
@@ -93,7 +103,8 @@ class WrappedQueryBuilder {
   withIndex(indexName: string, indexRange?: any): WrappedQueryBuilder {
     return new WrappedQueryBuilder(
       this.builder.withIndex(indexName, indexRange),
-      this.pii
+      this.pii,
+      this.encryptionEnabled
     );
   }
 
@@ -102,28 +113,40 @@ class WrappedQueryBuilder {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   filter(predicate: any): WrappedQueryBuilder {
-    return new WrappedQueryBuilder(this.builder.filter(predicate), this.pii);
+    return new WrappedQueryBuilder(this.builder.filter(predicate), this.pii, this.encryptionEnabled);
   }
 
   /**
    * Order results.
    */
   order(order: "asc" | "desc"): WrappedQueryBuilder {
-    return new WrappedQueryBuilder(this.builder.order(order), this.pii);
+    return new WrappedQueryBuilder(this.builder.order(order), this.pii, this.encryptionEnabled);
   }
 
   /**
    * Limit results.
    */
   take(n: number): WrappedQueryBuilder {
-    return new WrappedQueryBuilder(this.builder.take(n), this.pii);
+    return new WrappedQueryBuilder(this.builder.take(n), this.pii, this.encryptionEnabled);
   }
 
   private async decryptDoc(doc: AnyDoc): Promise<AnyDoc> {
     const result = { ...doc };
     for (const [key, value] of Object.entries(result)) {
       if (isEncryptedField(value)) {
-        result[key] = await this.pii.decrypt(value);
+        if (value.k === DEV_MODE_MARKER) {
+          // Dev mode: c contains plaintext
+          result[key] = value.c;
+        } else {
+          // Prod mode: actually decrypt
+          if (!this.pii) {
+            throw new Error(
+              `Cannot decrypt field "${key}": found encrypted data but encryption is disabled. ` +
+                `This may happen if prod data was copied to a dev environment.`
+            );
+          }
+          result[key] = await this.pii.decrypt(value);
+        }
       }
     }
     return result;
@@ -137,11 +160,12 @@ class WrappedQueryBuilder {
  */
 export class WrappedDb {
   private db: AnyDb;
-  private pii: UserPII;
+  private pii: UserPII | null;
   private piiFieldsByTable: Map<string, Set<string>>;
   private allPiiFields: Set<string>;
+  private encryptionEnabled: boolean;
 
-  constructor(ctx: AnyCtx, pii: UserPII, schema: AnyDoc) {
+  constructor(ctx: AnyCtx, pii: UserPII | null, schema: AnyDoc, options?: WrappedDbOptions) {
     this.db = ctx.db;
     this.pii = pii;
     this.piiFieldsByTable = extractPiiFields(schema);
@@ -149,6 +173,7 @@ export class WrappedDb {
     this.allPiiFields = new Set(
       [...this.piiFieldsByTable.values()].flatMap((s) => [...s])
     );
+    this.encryptionEnabled = options?.encryptionEnabled ?? true;
   }
 
   // ============================================================
@@ -226,7 +251,7 @@ export class WrappedDb {
    * @returns A wrapped query builder
    */
   query(table: string): WrappedQueryBuilder {
-    return new WrappedQueryBuilder(this.db.query(table), this.pii);
+    return new WrappedQueryBuilder(this.db.query(table), this.pii, this.encryptionEnabled);
   }
 
   // ============================================================
@@ -237,7 +262,19 @@ export class WrappedDb {
     const result = { ...obj };
     for (const field of this.allPiiFields) {
       if (field in result && typeof result[field] === "string") {
-        result[field] = await this.pii.encrypt(result[field]);
+        if (this.encryptionEnabled && this.pii) {
+          // Prod: actually encrypt
+          result[field] = await this.pii.encrypt(result[field]);
+        } else {
+          // Dev: store plaintext in encrypted shape
+          result[field] = {
+            __encrypted: true,
+            v: 1,
+            c: result[field], // plaintext
+            i: "",
+            k: DEV_MODE_MARKER,
+          } as EncryptedField;
+        }
       }
     }
     return result;
@@ -247,7 +284,19 @@ export class WrappedDb {
     const result = { ...doc };
     for (const [key, value] of Object.entries(result)) {
       if (isEncryptedField(value)) {
-        result[key] = await this.pii.decrypt(value);
+        if (value.k === DEV_MODE_MARKER) {
+          // Dev mode: c contains plaintext
+          result[key] = value.c;
+        } else {
+          // Prod mode: actually decrypt
+          if (!this.pii) {
+            throw new Error(
+              `Cannot decrypt field "${key}": found encrypted data but encryption is disabled. ` +
+                `This may happen if prod data was copied to a dev environment.`
+            );
+          }
+          result[key] = await this.pii.decrypt(value);
+        }
       }
     }
     return result;

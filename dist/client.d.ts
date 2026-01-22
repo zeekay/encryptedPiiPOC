@@ -40,8 +40,22 @@
 import type { EncryptedField } from "./schema.js";
 import { WrappedDb } from "./wrappedDb.js";
 export type { EncryptedField } from "./schema.js";
-export { piiField, isEncryptedField, extractPiiFields } from "./schema.js";
-export { WrappedDb, type Decrypted } from "./wrappedDb.js";
+export { piiField, isEncryptedField, extractPiiFields, DEV_MODE_MARKER } from "./schema.js";
+export { WrappedDb, type Decrypted, type WrappedDbOptions } from "./wrappedDb.js";
+/**
+ * Options for the EncryptedPII client.
+ */
+export interface EncryptedPIIOptions {
+    /**
+     * Whether to encrypt PII fields. Default: true.
+     * Set to false in dev environments to store plaintext for easier debugging.
+     * Data will still use the EncryptedField shape, but with plaintext in the `c` field.
+     *
+     * Safety: If disabled, wrapDb() will check that no real user keys exist
+     * in the database to prevent accidentally writing plaintext to prod.
+     */
+    encryptionEnabled?: boolean;
+}
 type AnyCtx = any;
 type AnyComponent = any;
 /**
@@ -93,7 +107,8 @@ export declare class UserPII {
  */
 export declare class EncryptedPII {
     private component;
-    constructor(component: AnyComponent);
+    private encryptionEnabled;
+    constructor(component: AnyComponent, options?: EncryptedPIIOptions);
     /**
      * Get a PII helper for a specific user (for mutations).
      * This fetches the user's encryption key once, then all subsequent

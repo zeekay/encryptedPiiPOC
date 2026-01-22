@@ -3,6 +3,9 @@
  */
 import { v } from "convex/values";
 
+/** Sentinel value indicating dev mode (not actually encrypted) */
+export const DEV_MODE_MARKER = "DEVELOPMENT_MODE_NOT_ENCRYPTED";
+
 /**
  * The shape of an encrypted PII field stored in your documents.
  * This is an object (not a string) so TypeScript prevents accidental usage.
