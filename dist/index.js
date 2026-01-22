@@ -86,5 +86,5 @@
  * console.log(`SSN: ${ssn}`);
  * ```
  */
-export { EncryptedPII, UserPII } from "./client.js";
-export { piiField, isEncryptedField } from "./client.js";
+export { EncryptedPII, UserPII, WrappedDb } from "./client.js";
+export { piiField, isEncryptedField, extractPiiFields } from "./client.js";

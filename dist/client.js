@@ -38,7 +38,9 @@
  * ```
  */
 import { generateKey, generateIV, encrypt, decrypt, wrapKey, unwrapKey, } from "./crypto.js";
-export { piiField, isEncryptedField } from "./schema.js";
+import { WrappedDb } from "./wrappedDb.js";
+export { piiField, isEncryptedField, extractPiiFields } from "./schema.js";
+export { WrappedDb } from "./wrappedDb.js";
 /**
  * Helper class for encrypting/decrypting PII for a specific user.
  * Returned by `encryptedPii.forUser()`.
@@ -189,6 +191,76 @@ export class EncryptedPII {
             return null;
         }
         return new UserPII(kek);
+    }
+    // ============================================================
+    // Wrapped DB API
+    // ============================================================
+    /**
+     * Get a wrapped database that automatically encrypts/decrypts PII fields.
+     * Use this in mutations for seamless PII handling.
+     *
+     * The schema's piiField() validators are the source of truth for which
+     * fields to encrypt. On reads, encrypted fields are detected by their
+     * __encrypted marker and automatically decrypted.
+     *
+     * @param ctx - Convex mutation context
+     * @param ownerId - The user who owns this data (typically user ID from auth)
+     * @param schema - Your Convex schema (import from "./schema")
+     * @returns WrappedDb with auto-encrypting writes and auto-decrypting reads
+     *
+     * @example
+     * ```typescript
+     * import schema from "./schema";
+     *
+     * const db = await encryptedPii.wrapDb(ctx, userId, schema);
+     *
+     * // Auto-encrypts on write (knows ssn is piiField from schema)
+     * await db.patch(userId, { ssn: "123-45-6789" });
+     * await db.insert("users", { name: "John", ssn: "123-45-6789" });
+     *
+     * // Auto-decrypts on read (detects __encrypted marker)
+     * const user = await db.get(userId);  // user.ssn is a string!
+     * const users = await db.query("users").collect();  // all decrypted
+     * ```
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async wrapDb(ctx, ownerId, schema) {
+        const pii = await this.forUser(ctx, ownerId);
+        return new WrappedDb(ctx, pii, schema);
+    }
+    /**
+     * Get a wrapped database for queries (read-only).
+     * Use this in queries when you only need to decrypt existing data.
+     *
+     * Returns null if the user has no encryption key yet (no encrypted data).
+     * The user's key must have been created by a prior forUser() or wrapDb() call.
+     *
+     * @param ctx - Convex query context
+     * @param ownerId - The user who owns this data
+     * @param schema - Your Convex schema (import from "./schema")
+     * @returns WrappedDb with auto-decrypting reads, or null if user has no key
+     *
+     * @example
+     * ```typescript
+     * import schema from "./schema";
+     *
+     * export const getUser = query({
+     *   args: { userId: v.id("users") },
+     *   handler: async (ctx, args) => {
+     *     const db = await encryptedPii.wrapDbQuery(ctx, args.userId, schema);
+     *     if (!db) return null;
+     *
+     *     return await db.get(args.userId);  // SSN auto-decrypted
+     *   },
+     * });
+     * ```
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async wrapDbQuery(ctx, ownerId, schema) {
+        const pii = await this.forUserQuery(ctx, ownerId);
+        if (!pii)
+            return null;
+        return new WrappedDb(ctx, pii, schema);
     }
     // ============================================================
     // Legacy API (stores data in component's tables)

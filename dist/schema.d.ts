@@ -51,4 +51,21 @@ export declare function piiField(): import("convex/values").VObject<{
  * Type guard to check if a value is an encrypted PII field.
  */
 export declare function isEncryptedField(value: unknown): value is EncryptedField;
+/**
+ * Extract PII field names from a Convex schema.
+ * Returns a Map from table name to Set of PII field names.
+ *
+ * @param schema - A Convex schema created with defineSchema()
+ * @returns Map from table name to Set of field names that use piiField()
+ *
+ * @example
+ * ```typescript
+ * import schema from "./schema";
+ * import { extractPiiFields } from "@convex-dev/encrypted-pii";
+ *
+ * const piiFields = extractPiiFields(schema);
+ * // Map { "users" => Set { "ssn", "creditCard" } }
+ * ```
+ */
+export declare function extractPiiFields(schema: any): Map<string, Set<string>>;
 //# sourceMappingURL=schema.d.ts.map

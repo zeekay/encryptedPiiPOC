@@ -162,6 +162,75 @@ export const getSSN = query({
 });
 ```
 
+### Using the Wrapped DB API (Recommended)
+
+For cleaner code without manual `encrypt()`/`decrypt()` calls, use the wrapped database API:
+
+```typescript
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+import { encryptedPii } from "./pii";
+import schema from "./schema";
+
+export const storeUser = mutation({
+  args: { name: v.string(), ssn: v.string() },
+  handler: async (ctx, args) => {
+    // Get wrapped db - pass your schema so it knows which fields are PII
+    const db = await encryptedPii.wrapDb(ctx, args.name, schema);
+
+    // Just write plain strings - encryption happens automatically!
+    return await db.insert("users", {
+      name: args.name,
+      ssn: args.ssn,  // Encrypted automatically based on piiField() in schema
+    });
+  },
+});
+
+export const getUser = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const db = await encryptedPii.wrapDb(ctx, args.userId, schema);
+
+    // Returns decrypted data automatically
+    const user = await db.get(args.userId);
+    // user.ssn is already a string, not EncryptedField!
+
+    return user;
+  },
+});
+
+// For queries (read-only), use wrapDbQuery
+export const getUserQuery = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const db = await encryptedPii.wrapDbQuery(ctx, args.userId, schema);
+    if (!db) return null;  // User has no encryption key yet
+
+    return await db.get(args.userId);
+  },
+});
+```
+
+The wrapped db supports all common operations:
+
+```typescript
+const db = await encryptedPii.wrapDb(ctx, userId, schema);
+
+// Write operations - PII fields auto-encrypted
+await db.insert("users", { name: "John", ssn: "123-45-6789" });
+await db.patch(userId, { ssn: "987-65-4321" });
+await db.replace(userId, { name: "Jane", ssn: "111-22-3333" });
+await db.delete(userId);
+
+// Read operations - PII fields auto-decrypted
+const user = await db.get(userId);
+const users = await db.query("users").collect();
+const firstUser = await db.query("users").first();
+const uniqueUser = await db.query("users")
+  .withIndex("by_email", q => q.eq("email", "john@example.com"))
+  .unique();
+```
+
 ### Storing Multiple PII Fields
 
 ```typescript
@@ -346,6 +415,36 @@ const pii = await encryptedPii.forUserQuery(ctx, userId);
 if (!pii) return null; // User has no encrypted data yet
 ```
 
+#### `wrapDb(ctx, ownerId, schema): Promise<WrappedDb>`
+
+Get a wrapped database that automatically encrypts/decrypts PII fields. Use in mutations.
+
+- `ctx` - Convex mutation context
+- `ownerId` - String identifying the user
+- `schema` - Your Convex schema (import from `./schema`)
+
+```typescript
+import schema from "./schema";
+
+const db = await encryptedPii.wrapDb(ctx, userId, schema);
+await db.patch(userId, { ssn: "123-45-6789" });  // Auto-encrypted
+const user = await db.get(userId);  // Auto-decrypted
+```
+
+#### `wrapDbQuery(ctx, ownerId, schema): Promise<WrappedDb | null>`
+
+Get a wrapped database for queries (read-only). Returns null if the user has no encryption key yet.
+
+- `ctx` - Convex query context
+- `ownerId` - String identifying the user
+- `schema` - Your Convex schema
+
+```typescript
+const db = await encryptedPii.wrapDbQuery(ctx, userId, schema);
+if (!db) return null;
+const user = await db.get(userId);  // Auto-decrypted
+```
+
 #### `deleteAllUserData(ctx, ownerId): Promise<number>`
 
 Delete all encryption keys for a user. Call this for GDPR compliance.
@@ -386,6 +485,64 @@ const { ssn, creditCard } = await pii.decryptMany({
   ssn: user.ssn,
   creditCard: user.creditCard,
 });
+```
+
+---
+
+### `WrappedDb` Class
+
+Returned by `encryptedPii.wrapDb()` or `encryptedPii.wrapDbQuery()`. Provides automatic encryption/decryption.
+
+#### Write Methods
+
+All write methods automatically encrypt PII fields (identified by `piiField()` in your schema):
+
+```typescript
+await db.insert("users", { name: "John", ssn: "123-45-6789" });
+await db.patch(userId, { ssn: "987-65-4321" });
+await db.replace(userId, { name: "Jane", ssn: "111-22-3333" });
+await db.delete(userId);
+```
+
+#### Read Methods
+
+All read methods automatically decrypt fields with the `__encrypted` marker:
+
+```typescript
+// Get by ID
+const user = await db.get(userId);
+
+// Query with full builder chain support
+const users = await db.query("users")
+  .withIndex("by_email", q => q.eq("email", "john@example.com"))
+  .filter(q => q.neq(q.field("name"), "Admin"))
+  .order("desc")
+  .take(10)
+  .collect();
+
+const first = await db.query("users").first();
+const unique = await db.query("users").withIndex("by_email", ...).unique();
+```
+
+---
+
+### `Decrypted<T>` Type Helper
+
+Utility type that transforms `EncryptedField` properties to `string`. Use for better TypeScript support with wrapped db results:
+
+```typescript
+import type { Doc } from "./_generated/dataModel";
+import type { Decrypted } from "@convex-dev/encrypted-pii";
+
+// Original type has ssn: EncryptedField
+type User = Doc<"users">;
+
+// Decrypted type has ssn: string
+type DecryptedUser = Decrypted<Doc<"users">>;
+
+// Use with wrapped db for full type safety
+const user = await db.get(userId) as DecryptedUser;
+console.log(user.ssn.toUpperCase());  // TypeScript knows ssn is string
 ```
 
 ---
@@ -516,121 +673,129 @@ This component does NOT protect against:
 
 ## Migration Guide
 
-### Migrating from Legacy API to forUser() API
+### Encrypting Existing Plaintext Data
 
-The legacy API (`store()`/`get()`) stored encrypted data in the component's tables. The new `forUser()` API stores encrypted data directly in your documents, which is faster and gives you more control.
+If you have existing unencrypted PII data in your database, you'll need to migrate it to the encrypted format.
 
-#### Before (Legacy API)
+#### Step 1: Update Your Schema
 
-```typescript
-// Schema - stored references to component's tables
-users: defineTable({
-  name: v.string(),
-  ssnRef: v.optional(v.string()),  // Just a reference string
-})
-
-// Storing
-const ssnRef = await encryptedPii.store(ctx, userId, ssn);
-await ctx.db.patch(userId, { ssnRef });
-
-// Reading
-const ssn = await encryptedPii.get(ctx, userId, user.ssnRef);
-```
-
-#### After (New forUser() API)
+Add the encrypted field alongside your existing plaintext field:
 
 ```typescript
-// Schema - stores encrypted data directly
+// convex/schema.ts
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
 import { piiField } from "@convex-dev/encrypted-pii";
 
-users: defineTable({
-  name: v.string(),
-  ssn: v.optional(piiField()),  // EncryptedField object
-})
-
-// Storing
-const pii = await encryptedPii.forUser(ctx, userId);
-await ctx.db.patch(userId, { ssn: await pii.encrypt(ssn) });
-
-// Reading
-const pii = await encryptedPii.forUser(ctx, userId);
-const ssn = await pii.decrypt(user.ssn);
+export default defineSchema({
+  users: defineTable({
+    name: v.string(),
+    email: v.string(),
+    // Keep old field during migration
+    ssn: v.optional(v.string()),
+    // Add new encrypted field
+    ssnEncrypted: v.optional(piiField()),
+  }),
+});
 ```
 
-#### Migration Steps
-
-1. **Update your schema** to use `piiField()` instead of `v.string()`:
+#### Step 2: Create a Migration Mutation
 
 ```typescript
-// Before
-ssnRef: v.optional(v.string()),
-
-// After
-ssn: v.optional(piiField()),
-```
-
-2. **Create a migration mutation** to re-encrypt existing data:
-
-```typescript
+// convex/migrations.ts
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
 import { encryptedPii } from "./pii";
 
+// Migrate a single user
 export const migrateUserPII = mutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user?.ssnRef) return; // No data to migrate
+    if (!user?.ssn || user.ssnEncrypted) {
+      return { status: "skipped" };
+    }
 
-    // Decrypt using legacy API
-    const ssn = await encryptedPii.get(ctx, args.userId, user.ssnRef);
-    if (!ssn) return;
-
-    // Re-encrypt using new API
+    // Encrypt the plaintext value
     const pii = await encryptedPii.forUser(ctx, args.userId);
 
-    // Update document with new format and remove old ref
     await ctx.db.patch(args.userId, {
-      ssn: await pii.encrypt(ssn),
-      ssnRef: undefined,  // Remove old reference
+      ssnEncrypted: await pii.encrypt(user.ssn),
+      ssn: undefined,  // Clear plaintext
     });
 
-    // Optionally delete old data from component
-    await encryptedPii.delete(ctx, args.userId, user.ssnRef);
+    return { status: "migrated" };
   },
 });
-```
 
-3. **Run migration** for all users:
-
-```typescript
+// Migrate all users in batches
 export const migrateAllUsers = mutation({
-  handler: async (ctx) => {
-    const users = await ctx.db.query("users").collect();
-    let migrated = 0;
+  args: { cursor: v.optional(v.string()), batchSize: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 100;
 
-    for (const user of users) {
-      if (user.ssnRef && !user.ssn) {
-        // Has old format, needs migration
-        const ssn = await encryptedPii.get(ctx, user._id, user.ssnRef);
-        if (ssn) {
-          const pii = await encryptedPii.forUser(ctx, user._id);
-          await ctx.db.patch(user._id, {
-            ssn: await pii.encrypt(ssn),
-            ssnRef: undefined,
-          });
-          await encryptedPii.delete(ctx, user._id, user.ssnRef);
-          migrated++;
-        }
+    const results = await ctx.db
+      .query("users")
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize });
+
+    let migrated = 0;
+    for (const user of results.page) {
+      if (user.ssn && !user.ssnEncrypted) {
+        const pii = await encryptedPii.forUser(ctx, user._id);
+        await ctx.db.patch(user._id, {
+          ssnEncrypted: await pii.encrypt(user.ssn),
+          ssn: undefined,
+        });
+        migrated++;
       }
     }
 
-    return { migrated };
+    return {
+      migrated,
+      isDone: results.isDone,
+      continueCursor: results.continueCursor,
+    };
   },
 });
 ```
 
-4. **Update all your mutations** to use the new API pattern.
+#### Step 3: Run the Migration
 
-5. **Remove old schema fields** once migration is complete.
+Call `migrateAllUsers` repeatedly until `isDone` is true:
+
+```typescript
+// From your app or dashboard
+let cursor = undefined;
+let totalMigrated = 0;
+
+while (true) {
+  const result = await migrateAllUsers({ cursor });
+  totalMigrated += result.migrated;
+
+  if (result.isDone) break;
+  cursor = result.continueCursor;
+}
+
+console.log(`Migrated ${totalMigrated} users`);
+```
+
+#### Step 4: Update Your Schema and Code
+
+Once migration is complete:
+
+1. **Rename the field** in your schema:
+
+```typescript
+users: defineTable({
+  name: v.string(),
+  email: v.string(),
+  ssn: v.optional(piiField()),  // Renamed from ssnEncrypted
+}),
+```
+
+2. **Update all code** to use the new field name and encryption APIs.
+
+3. **Deploy** and verify everything works.
 
 ---
 

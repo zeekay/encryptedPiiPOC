@@ -38,8 +38,10 @@
  * ```
  */
 import type { EncryptedField } from "./schema.js";
+import { WrappedDb } from "./wrappedDb.js";
 export type { EncryptedField } from "./schema.js";
-export { piiField, isEncryptedField } from "./schema.js";
+export { piiField, isEncryptedField, extractPiiFields } from "./schema.js";
+export { WrappedDb, type Decrypted } from "./wrappedDb.js";
 type AnyCtx = any;
 type AnyComponent = any;
 /**
@@ -145,6 +147,63 @@ export declare class EncryptedPII {
      * ```
      */
     forUserQuery(ctx: AnyCtx, ownerId: string): Promise<UserPII | null>;
+    /**
+     * Get a wrapped database that automatically encrypts/decrypts PII fields.
+     * Use this in mutations for seamless PII handling.
+     *
+     * The schema's piiField() validators are the source of truth for which
+     * fields to encrypt. On reads, encrypted fields are detected by their
+     * __encrypted marker and automatically decrypted.
+     *
+     * @param ctx - Convex mutation context
+     * @param ownerId - The user who owns this data (typically user ID from auth)
+     * @param schema - Your Convex schema (import from "./schema")
+     * @returns WrappedDb with auto-encrypting writes and auto-decrypting reads
+     *
+     * @example
+     * ```typescript
+     * import schema from "./schema";
+     *
+     * const db = await encryptedPii.wrapDb(ctx, userId, schema);
+     *
+     * // Auto-encrypts on write (knows ssn is piiField from schema)
+     * await db.patch(userId, { ssn: "123-45-6789" });
+     * await db.insert("users", { name: "John", ssn: "123-45-6789" });
+     *
+     * // Auto-decrypts on read (detects __encrypted marker)
+     * const user = await db.get(userId);  // user.ssn is a string!
+     * const users = await db.query("users").collect();  // all decrypted
+     * ```
+     */
+    wrapDb(ctx: AnyCtx, ownerId: string, schema: any): Promise<WrappedDb>;
+    /**
+     * Get a wrapped database for queries (read-only).
+     * Use this in queries when you only need to decrypt existing data.
+     *
+     * Returns null if the user has no encryption key yet (no encrypted data).
+     * The user's key must have been created by a prior forUser() or wrapDb() call.
+     *
+     * @param ctx - Convex query context
+     * @param ownerId - The user who owns this data
+     * @param schema - Your Convex schema (import from "./schema")
+     * @returns WrappedDb with auto-decrypting reads, or null if user has no key
+     *
+     * @example
+     * ```typescript
+     * import schema from "./schema";
+     *
+     * export const getUser = query({
+     *   args: { userId: v.id("users") },
+     *   handler: async (ctx, args) => {
+     *     const db = await encryptedPii.wrapDbQuery(ctx, args.userId, schema);
+     *     if (!db) return null;
+     *
+     *     return await db.get(args.userId);  // SSN auto-decrypted
+     *   },
+     * });
+     * ```
+     */
+    wrapDbQuery(ctx: AnyCtx, ownerId: string, schema: any): Promise<WrappedDb | null>;
     /**
      * @deprecated Use `forUser()` instead for better performance.
      * Store an encrypted value in the component's tables.
