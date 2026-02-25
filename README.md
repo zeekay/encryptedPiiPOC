@@ -1,3 +1,6 @@
+# Beta
+This code has not been tested or verified to be cryptographically secure. It is meant as a demonstration of an architecture to provide limited protection against accidental secret release.
+
 # @convex-dev/encrypted-pii
 
 Type-safe encrypted PII field storage for Convex. Store sensitive data (SSN, credit cards, etc.) with per-user encryption keys and full TypeScript safety.
